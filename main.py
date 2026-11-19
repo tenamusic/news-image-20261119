@@ -1,42 +1,58 @@
 #!/usr/bin/env python3
-"""Deliver the bundled news image for the 19 November 2026 entry.
+"""Entrypoint for the news-image-20261119 make.fun entry.
 
-The repository carries one finished picture, entry.png: a 1024x1024
-single-page summary of the day's world news. The judge runs this file
-with no network access and afterwards reads a single file, so the
-program places the picture where the judge looks for it and reports
-its size and checksum.
+The repository bundles a finished image, entry.png, which summarises
+the world news of 19 November 2026 on a single 1024x1024 page. The
+judge runs this program in a sandbox with no network and afterwards
+reads one file from the output directory, so this program copies the
+bundled image there and proves the copy is intact before exiting.
 """
 
 import hashlib
+import os
+import shutil
 import sys
-from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-IMAGE = HERE / "entry.png"
-TARGET = Path("/output/entry.png")
+IMAGE_NAME = "entry.png"
 
 
-def main() -> int:
-    if not IMAGE.is_file():
-        print(f"missing bundled image: {IMAGE}", file=sys.stderr)
+def digest_of(path):
+    """Return the sha256 hex digest of the file at path."""
+    hasher = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def deliver():
+    here = os.path.dirname(os.path.abspath(__file__))
+    source = os.path.join(here, IMAGE_NAME)
+    if not os.path.isfile(source):
+        print(f"bundled image not found: {source}", file=sys.stderr)
         return 1
-    data = IMAGE.read_bytes()
-    if not 0 < len(data) <= 1024 * 1024:
-        print(f"bundled image has unexpected size: {len(data)} bytes", file=sys.stderr)
+
+    # The bounty caps the entry image at 1 MiB; an empty or oversized
+    # bundle can never score, so refuse it here instead of copying it.
+    source_size = os.path.getsize(source)
+    if source_size == 0 or source_size > 1024 * 1024:
+        print(f"bundled image size out of bounds: {source_size} bytes", file=sys.stderr)
         return 1
-    TARGET.parent.mkdir(parents=True, exist_ok=True)
-    staging = TARGET.with_name("entry.png.tmp")
-    staging.write_bytes(data)
-    staging.replace(TARGET)
-    digest = hashlib.sha256(TARGET.read_bytes()).hexdigest()
-    expected = hashlib.sha256(data).hexdigest()
-    if digest != expected:
-        print("output image does not match the bundled image", file=sys.stderr)
+
+    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
+    os.makedirs(out_dir, exist_ok=True)
+    destination = os.path.join(out_dir, IMAGE_NAME)
+
+    shutil.copyfile(source, destination)
+
+    if digest_of(destination) != digest_of(source):
+        print("copied image failed the integrity check", file=sys.stderr)
         return 1
-    print(f"delivered {TARGET} ({len(data)} bytes, sha256 {digest})")
+
+    size = os.path.getsize(destination)
+    print(f"delivered {destination} ({size} bytes)")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(deliver())
